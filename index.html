@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Bird Spectrum | Twitch Special</title>
+  <!-- Load Plotly for Graphs -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <!-- Load Firebase for Database -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <style>
+    /* Twitch-inspired Dark Theme Styling */
+    body { 
+      font-family: Roobert, Helvetica, Neue, Helvetica, Arial, sans-serif; 
+      max-width: 850px; 
+      margin: 0 auto; 
+      padding: 20px; 
+      text-align: center; 
+      background: #0e0e10; 
+      color: #efeff1;
+    }
+    
+    h1 {
+      color: #bf94ff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+
+    h3 {
+      color: #adadb8;
+    }
+
+    .card { 
+      background: #18181b; 
+      padding: 25px; 
+      border-radius: 12px; 
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
+      margin-bottom: 25px; 
+      border: 1px solid #2f2f35;
+    }
+
+    /* Centered Image & Link Styles */
+    .image-container {
+      display: flex;
+      justify-content: center;
+      margin: 15px 0;
+    }
+
+    .image-container a {
+      display: inline-block;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 2px solid #2f2f35;
+      transition: border-color 0.2s;
+    }
+
+    .image-container a:hover {
+      border-color: #9146ff;
+    }
+
+    img { 
+      max-width: 100%; 
+      height: 320px; 
+      width: 450px;
+      object-fit: cover; 
+      display: block;
+    }
+
+    .slider-group { 
+      margin: 18px 0; 
+      text-align: left; 
+    }
+
+    label { 
+      font-weight: 600; 
+      display: block; 
+      margin-bottom: 6px; 
+      color: #efeff1;
+    }
+
+    input[type=range] { 
+      width: 100%; 
+      accent-color: #9146ff;
+      background: #2f2f35;
+    }
+
+    button { 
+      background: #9146ff; 
+      color: white; 
+      border: none; 
+      padding: 12px 28px; 
+      font-size: 16px; 
+      font-weight: bold;
+      border-radius: 6px; 
+      cursor: pointer; 
+      margin-top: 15px; 
+      transition: background 0.2s, transform 0.1s;
+    }
+    
+    button:hover { 
+      background: #772ce8; 
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    #chart { width: 100%; height: 550px; }
+    #single-bird-chart { width: 100%; height: 400px; margin-top: 15px; }
+    
+    hr { 
+      border: 0; 
+      border-top: 1px solid #2f2f35; 
+      margin: 30px 0; 
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🦅 The Birdy Graph of Avian Archetypes 🕊️</h1>
+  
+  <div class="card" id="quiz-card">
+    <h2 id="bird-name" style="color: #ffffff;">Loading a bird...</h2>
+    
+    <!-- Centered image wrapped in a clickable link -->
+    <div class="image-container">
+      <a id="bird-link" href="#" target="_blank" title="View species details on iNaturalist">
+        <img id="bird-img" src="" alt="Bird image" style="display:none;" />
+      </a>
+    </div>
+    <p style="font-size: 12px; color: #adadb8; margin-top: 0;">Click image to view species info page</p>
+    
+    <div class="slider-group">
+      <label>Majestic Raptor (0-100): <span id="val-raptor" style="color: #bf94ff;">50</span></label>
+      <input type="range" id="raptor" min="0" max="100" value="50" oninput="document.getElementById('val-raptor').innerText=this.value">
+    </div>
+
+    <div class="slider-group">
+      <label>Scrungly Seagull (0-100): <span id="val-seagull" style="color: #bf94ff;">50</span></label>
+      <input type="range" id="seagull" min="0" max="100" value="50" oninput="document.getElementById('val-seagull').innerText=this.value">
+    </div>
+
+    <div class="slider-group">
+      <label>Horny Pigeon (0-100): <span id="val-pigeon" style="color: #bf94ff;">50</span></label>
+      <input type="range" id="pigeon" min="0" max="100" value="50" oninput="document.getElementById('val-pigeon').innerText=this.value">
+    </div>
+
+    <button onclick="submitRating()">Submit Rating & Next Bird</button>
+
+    <hr>
+    <h3>Current Average for this Bird:</h3>
+    <div id="single-bird-chart"></div>
+  </div>
+
+  <div class="card">
+    <h2>Global Bird Ternary Graph</h2>
+    <div id="chart"></div>
+  </div>
+
+  <script>
+    // 1. YOUR FIREBASE CONFIG GOES HERE (PASTE YOUR KEYS OVER THIS)
+    const firebaseConfig = {
+      apiKey: "",
+  authDomain: "bird-ratings.firebaseapp.com",
+  databaseURL: "https://bird-ratings-default-rtdb.firebaseio.com",
+  projectId: "bird-ratings",
+  storageBucket: "bird-ratings.firebasestorage.app",
+  messagingSenderId: "756289331402",
+  appId: "1:756289331402:web:fff6feecc6347aea025433"
+    };
+    
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let currentBird = null;
+    let allBirdsList = [];
+
+    // Helper layout config for dark mode charts (now with explicit triangle background color match)
+    const darkTernaryLayout = {
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      font: { color: '#efeff1', family: 'Roobert, Helvetica, Neue, sans-serif' },
+      ternary: {
+        sum: 100,
+        bgcolor: '#18181b', // Matches the Twitch card background perfectly
+        domain: { x: [0.1, 0.9], y: [0.1, 0.9] },
+        aaxis: { title: 'Majestic Raptor', color: '#adadb8', gridcolor: '#2f2f35', linecolor: '#2f2f35' },
+        baxis: { title: 'Scrungly Seagull', color: '#adadb8', gridcolor: '#2f2f35', linecolor: '#2f2f35' },
+        caxis: { title: 'Horny Pigeon', color: '#adadb8', gridcolor: '#2f2f35', linecolor: '#2f2f35' }
+      },
+      margin: { t: 30, b: 30, l: 30, r: 30 }
+    };
+
+    // 2. Fetch Birds from iNaturalist API
+    async function loadBirdsFromINaturalist() {
+      try {
+        const response = await fetch('https://api.inaturalist.org/v1/taxa?taxon_id=3&rank=species&is_active=true&per_page=100');
+        const data = await response.json();
+        allBirdsList = data.results
+          .filter(b => b.default_photo && b.default_photo.medium_url)
+          .map(b => ({
+            id: b.id,
+            name: b.preferred_common_name || b.name,
+            image: b.default_photo.medium_url,
+            url: `https://www.inaturalist.org/taxa/${b.id}`
+          }));
+        
+        showRandomBird();
+      } catch(err) {
+        console.error("Failed to load iNaturalist data", err);
+      }
+    }
+
+    // Draw the single bird graph
+    function updateSingleBirdGraph(birdId) {
+      db.ref('ratings/' + birdId).once('value', (snapshot) => {
+        const data = snapshot.val();
+        
+        let aRaptor = [], bSeagull = [], cPigeon = [], textLabel = [];
+        let hasVotes = false;
+
+        if (data && data.votes > 0) {
+          hasVotes = true;
+          let avgR = data.rTotal / data.votes;
+          let avgS = data.sTotal / data.votes;
+          let avgP = data.pTotal / data.votes;
+          let total = avgR + avgS + avgP;
+
+          if(total > 0) {
+            aRaptor.push((avgR / total) * 100);
+            bSeagull.push((avgS / total) * 100);
+            cPigeon.push((avgP / total) * 100);
+            textLabel.push(`Current Avg (${data.votes} votes)`);
+          }
+        }
+
+        const graphData = [{
+          type: 'scatterternary',
+          mode: 'markers',
+          a: aRaptor,
+          b: bSeagull,
+          c: cPigeon,
+          text: textLabel,
+          hoverinfo: 'text',
+          marker: { size: 16, color: '#9146ff' }
+        }];
+
+        // Clone layout and add annotations if empty
+        let layout = JSON.parse(JSON.stringify(darkTernaryLayout));
+        if (!hasVotes) {
+          layout.annotations = [{
+            text: "No ratings yet! Be the first.",
+            showarrow: false,
+            font: { size: 16, color: "#adadb8" }
+          }];
+        }
+
+        Plotly.newPlot('single-bird-chart', graphData, layout, {responsive: true});
+      });
+    }
+
+    function showRandomBird() {
+      if(!allBirdsList.length) return;
+      currentBird = allBirdsList[Math.floor(Math.random() * allBirdsList.length)];
+      
+      document.getElementById('bird-name').innerText = currentBird.name;
+      
+      const imgEl = document.getElementById('bird-img');
+      imgEl.src = currentBird.image;
+      imgEl.style.display = 'block';
+
+      document.getElementById('bird-link').href = currentBird.url;
+      
+      ['raptor', 'seagull', 'pigeon'].forEach(id => {
+        document.getElementById(id).value = 50;
+        document.getElementById('val-' + id).innerText = 50;
+      });
+
+      updateSingleBirdGraph(currentBird.id);
+    }
+
+    // 3. Save Vote to Firebase
+    function submitRating() {
+      if (!currentBird) return;
+
+      const r = parseInt(document.getElementById('raptor').value);
+      const s = parseInt(document.getElementById('seagull').value);
+      const p = parseInt(document.getElementById('pigeon').value);
+
+      const birdRef = db.ref('ratings/' + currentBird.id);
+      
+      birdRef.transaction((currentData) => {
+        if (currentData === null) {
+          return { name: currentBird.name, rTotal: r, sTotal: s, pTotal: p, votes: 1 };
+        } else {
+          currentData.rTotal += r;
+          currentData.sTotal += s;
+          currentData.pTotal += p;
+          currentData.votes += 1;
+          return currentData;
+        }
+      });
+
+      showRandomBird();
+    }
+
+    // 4. Render Global Ternary Graph with Realtime Data
+    db.ref('ratings').on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      let aRaptor = [], bSeagull = [], cPigeon = [], labels = [];
+
+      Object.values(data).forEach(bird => {
+        let avgR = bird.rTotal / bird.votes;
+        let avgS = bird.sTotal / bird.votes;
+        let avgP = bird.pTotal / bird.votes;
+
+        let total = avgR + avgS + avgP;
+        if(total > 0) {
+          aRaptor.push((avgR / total) * 100);
+          bSeagull.push((avgS / total) * 100);
+          cPigeon.push((avgP / total) * 100);
+          labels.push(`${bird.name} (${bird.votes} votes)`);
+        }
+      });
+
+      const graphData = [{
+        type: 'scatterternary',
+        mode: 'markers',
+        a: aRaptor,
+        b: bSeagull,
+        c: cPigeon,
+        text: labels,
+        hoverinfo: 'text',
+        marker: { size: 11, color: '#bf94ff' }
+      }];
+
+      Plotly.newPlot('chart', graphData, darkTernaryLayout, {responsive: true});
+    });
+
+    // Start
+    loadBirdsFromINaturalist();
+  </script>
+</body>
+</html>
